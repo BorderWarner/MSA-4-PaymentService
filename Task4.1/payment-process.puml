@@ -1,0 +1,97 @@
+@startuml payment-process
+title OrchestrPay — платёж
+skinparam shadowing false
+skinparam backgroundColor white
+skinparam defaultFontName DejaVu Sans
+skinparam ArrowColor #475569
+skinparam activity {
+  BackgroundColor #F8FAFC
+  BorderColor #475569
+  FontColor #0F172A
+}
+
+start
+:Платёж;
+:Создать платёж;
+:Списать средства;
+note right
+  Для завершённого списания зарегистрирован
+  обработчик компенсации «Вернуть списание».
+end note
+:Проверить антифрод;
+
+switch (Результат проверки)
+case (MANUAL)
+  :Начать ручную проверку;
+  note right
+    review_deadline = начало проверки + 20 минут
+  end note
+  :Решение оператора;
+  if (Решение принято до review_deadline?) then (Да)
+    :ALLOW / DENY\ndecision_source = operator;
+  else (20 минут истекли)
+    :Прервать ручную задачу;
+    :Разрешить по cut-off\nALLOW, decision_source = cutoff;
+  endif
+case (Нет ответа)
+  :Ожидать ответ FraudCheck;
+  note right
+    Сообщение FraudDecision.
+    Корреляция по payment_id.
+    check_timeout — 30 секунд по умолчанию.
+  end note
+  if (Ответ получен до check_timeout?) then (Да)
+    :Принять ALLOW / DENY;
+  else (Cut-off проверки)
+    :Прервать ожидание;
+    :Разрешить по cut-off\nALLOW, decision_source = cutoff;
+  endif
+case (ALLOW / DENY)
+  :Принять окончательное решение FraudCheck;
+endswitch
+
+:Зафиксировать решение;
+if (Разрешено?) then (ALLOW)
+  :Перевести контрагенту;
+  note right
+    Pivot достигается только при
+    подтверждённом успешном переводе.
+  end note
+  if (Перевод успешен?) then (Да)
+    :Уведомить клиента;
+    :Проведён;
+    stop
+  else (Нет)
+    :Подтверждённый отказ перевода;
+  endif
+else (DENY)
+  :Перевод заблокирован;
+endif
+
+:Начать возврат;
+fork
+  :Компенсировать списание;
+  note right
+    Событие компенсации с activityRef = Debit
+    вызывает обработчик «Вернуть списание»
+    и ожидает его завершения.
+  end note
+  :Вернуть списание;
+fork again
+  :Уведомить безопасность при DENY;
+  note right
+    При отказе перевода без DENY
+    уведомление пропускается обработчиком.
+  end note
+end fork
+:Подтвердить возврат;
+:Уведомить клиента;
+:Возвращён;
+stop
+
+legend bottom
+  Таймер и решение конкурируют: выполняется один исход ожидания.
+  Возврат и ветка безопасности выполняются параллельно.
+  Имена действий соответствуют BPMN и истории Operate.
+endlegend
+@enduml
