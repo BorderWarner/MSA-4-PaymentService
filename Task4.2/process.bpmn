@@ -1,0 +1,491 @@
+<?xml version='1.0' encoding='utf-8'?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Definitions_OrchestrPay" targetNamespace="https://orchestrpay.example/payment" exporter="OrchestrPay">
+  <bpmn:message id="FraudDecision" name="FraudDecision">
+    <bpmn:extensionElements>
+      <zeebe:subscription correlationKey="=payment_id" />
+    </bpmn:extensionElements>
+  </bpmn:message>
+  <bpmn:process id="orchestrpay-payment" name="OrchestrPay — платёж" isExecutable="true">
+    <bpmn:startEvent id="Start" name="Платёж">
+      <bpmn:outgoing>Flow_Start_Create</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:serviceTask id="Create" name="Создать платёж">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="create-payment" retries="3" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_Start_Create</bpmn:incoming>
+      <bpmn:outgoing>Flow_Create_Debit</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="Debit" name="Списать средства">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="debit-funds" retries="3" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_Create_Debit</bpmn:incoming>
+      <bpmn:outgoing>Flow_Debit_Fraud</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:boundaryEvent id="DebitCompensation" name="" attachedToRef="Debit">
+      <bpmn:compensateEventDefinition id="EventDefinition_18" />
+    </bpmn:boundaryEvent>
+    <bpmn:serviceTask id="Refund" name="Вернуть списание" isForCompensation="true">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="refund-funds" retries="3" />
+      </bpmn:extensionElements>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="Fraud" name="Проверить антифрод">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="check-fraud" retries="3" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_Debit_Fraud</bpmn:incoming>
+      <bpmn:outgoing>Flow_Fraud_FraudResult</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:exclusiveGateway id="FraudResult" name="Результат проверки">
+      <bpmn:incoming>Flow_Fraud_FraudResult</bpmn:incoming>
+      <bpmn:outgoing>Flow_FraudResult_PrepareReview</bpmn:outgoing>
+      <bpmn:outgoing>Flow_FraudResult_AwaitFraud</bpmn:outgoing>
+      <bpmn:outgoing>Flow_FraudResult_RecordDecision</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:serviceTask id="PrepareReview" name="Начать ручную проверку">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="prepare-review" retries="3" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_FraudResult_PrepareReview</bpmn:incoming>
+      <bpmn:outgoing>Flow_PrepareReview_ManualReview</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:userTask id="ManualReview" name="Решение оператора">
+      <bpmn:extensionElements>
+        <zeebe:userTask />
+        <zeebe:assignmentDefinition candidateUsers="demo" />
+        <zeebe:formDefinition formId="fraud-review" />
+        <zeebe:taskSchedule dueDate="=review_deadline" />
+        <zeebe:ioMapping>
+          <zeebe:output source="=manual_decision" target="decision" />
+          <zeebe:output source="=&quot;operator&quot;" target="decision_source" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_PrepareReview_ManualReview</bpmn:incoming>
+      <bpmn:outgoing>Flow_ManualReview_RecordDecision</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:boundaryEvent id="ReviewTimeout" name="20 минут" attachedToRef="ManualReview" cancelActivity="true">
+      <bpmn:outgoing>Flow_ReviewTimeout_Cutoff</bpmn:outgoing>
+      <bpmn:timerEventDefinition id="EventDefinition_50">
+        <bpmn:timeDate>=review_deadline</bpmn:timeDate>
+      </bpmn:timerEventDefinition>
+    </bpmn:boundaryEvent>
+    <bpmn:receiveTask id="AwaitFraud" name="Ожидать ответ FraudCheck" messageRef="FraudDecision">
+      <bpmn:incoming>Flow_FraudResult_AwaitFraud</bpmn:incoming>
+      <bpmn:outgoing>Flow_AwaitFraud_RecordDecision</bpmn:outgoing>
+    </bpmn:receiveTask>
+    <bpmn:boundaryEvent id="CheckTimeout" name="Cut-off проверки" attachedToRef="AwaitFraud" cancelActivity="true">
+      <bpmn:outgoing>Flow_CheckTimeout_Cutoff</bpmn:outgoing>
+      <bpmn:timerEventDefinition id="EventDefinition_57">
+        <bpmn:timeDuration>=check_timeout</bpmn:timeDuration>
+      </bpmn:timerEventDefinition>
+    </bpmn:boundaryEvent>
+    <bpmn:serviceTask id="Cutoff" name="Разрешить по cut-off">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="allow-cutoff" retries="3" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ReviewTimeout_Cutoff</bpmn:incoming>
+      <bpmn:incoming>Flow_CheckTimeout_Cutoff</bpmn:incoming>
+      <bpmn:outgoing>Flow_Cutoff_RecordDecision</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="RecordDecision" name="Зафиксировать решение">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="record-decision" retries="3" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_FraudResult_RecordDecision</bpmn:incoming>
+      <bpmn:incoming>Flow_ManualReview_RecordDecision</bpmn:incoming>
+      <bpmn:incoming>Flow_AwaitFraud_RecordDecision</bpmn:incoming>
+      <bpmn:incoming>Flow_Cutoff_RecordDecision</bpmn:incoming>
+      <bpmn:outgoing>Flow_RecordDecision_FinalDecision</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:exclusiveGateway id="FinalDecision" name="Разрешено?">
+      <bpmn:incoming>Flow_RecordDecision_FinalDecision</bpmn:incoming>
+      <bpmn:outgoing>Flow_FinalDecision_Transfer</bpmn:outgoing>
+      <bpmn:outgoing>Flow_FinalDecision_PrepareRefund</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:serviceTask id="Transfer" name="Перевести контрагенту">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="transfer-funds" retries="3" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_FinalDecision_Transfer</bpmn:incoming>
+      <bpmn:outgoing>Flow_Transfer_TransferResult</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:exclusiveGateway id="TransferResult" name="Перевод успешен? Pivot при успехе">
+      <bpmn:incoming>Flow_Transfer_TransferResult</bpmn:incoming>
+      <bpmn:outgoing>Flow_TransferResult_NotifySuccess</bpmn:outgoing>
+      <bpmn:outgoing>Flow_TransferResult_PrepareRefund</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:serviceTask id="NotifySuccess" name="Уведомить клиента">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="notify-customer" retries="3" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_TransferResult_NotifySuccess</bpmn:incoming>
+      <bpmn:outgoing>Flow_NotifySuccess_Success</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="Success" name="Проведён">
+      <bpmn:incoming>Flow_NotifySuccess_Success</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:serviceTask id="PrepareRefund" name="Начать возврат">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="prepare-refund" retries="3" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_FinalDecision_PrepareRefund</bpmn:incoming>
+      <bpmn:incoming>Flow_TransferResult_PrepareRefund</bpmn:incoming>
+      <bpmn:outgoing>Flow_PrepareRefund_RefundSplit</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:parallelGateway id="RefundSplit" name="">
+      <bpmn:incoming>Flow_PrepareRefund_RefundSplit</bpmn:incoming>
+      <bpmn:outgoing>Flow_RefundSplit_Compensate</bpmn:outgoing>
+      <bpmn:outgoing>Flow_RefundSplit_NotifySecurity</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:intermediateThrowEvent id="Compensate" name="Компенсировать списание">
+      <bpmn:incoming>Flow_RefundSplit_Compensate</bpmn:incoming>
+      <bpmn:outgoing>Flow_Compensate_RefundJoin</bpmn:outgoing>
+      <bpmn:compensateEventDefinition activityRef="Debit" id="EventDefinition_106" />
+    </bpmn:intermediateThrowEvent>
+    <bpmn:serviceTask id="NotifySecurity" name="Уведомить безопасность при DENY">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="notify-security" retries="3" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_RefundSplit_NotifySecurity</bpmn:incoming>
+      <bpmn:outgoing>Flow_NotifySecurity_RefundJoin</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:parallelGateway id="RefundJoin" name="">
+      <bpmn:incoming>Flow_Compensate_RefundJoin</bpmn:incoming>
+      <bpmn:incoming>Flow_NotifySecurity_RefundJoin</bpmn:incoming>
+      <bpmn:outgoing>Flow_RefundJoin_FinishRefund</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:serviceTask id="FinishRefund" name="Подтвердить возврат">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="finish-refund" retries="3" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_RefundJoin_FinishRefund</bpmn:incoming>
+      <bpmn:outgoing>Flow_FinishRefund_NotifyRefund</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="NotifyRefund" name="Уведомить клиента">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="notify-customer" retries="3" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_FinishRefund_NotifyRefund</bpmn:incoming>
+      <bpmn:outgoing>Flow_NotifyRefund_Refunded</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="Refunded" name="Возвращён">
+      <bpmn:incoming>Flow_NotifyRefund_Refunded</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="Flow_Start_Create" sourceRef="Start" targetRef="Create" />
+    <bpmn:sequenceFlow id="Flow_Create_Debit" sourceRef="Create" targetRef="Debit" />
+    <bpmn:sequenceFlow id="Flow_Debit_Fraud" sourceRef="Debit" targetRef="Fraud" />
+    <bpmn:sequenceFlow id="Flow_Fraud_FraudResult" sourceRef="Fraud" targetRef="FraudResult" />
+    <bpmn:sequenceFlow id="Flow_FraudResult_PrepareReview" sourceRef="FraudResult" targetRef="PrepareReview" name="MANUAL">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">= decision = "MANUAL"</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_FraudResult_AwaitFraud" sourceRef="FraudResult" targetRef="AwaitFraud" name="Нет ответа">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">= decision = "PENDING"</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_FraudResult_RecordDecision" sourceRef="FraudResult" targetRef="RecordDecision" name="ALLOW / DENY">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">= decision = "ALLOW" or decision = "DENY"</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_PrepareReview_ManualReview" sourceRef="PrepareReview" targetRef="ManualReview" />
+    <bpmn:sequenceFlow id="Flow_ManualReview_RecordDecision" sourceRef="ManualReview" targetRef="RecordDecision" name="ALLOW / DENY" />
+    <bpmn:sequenceFlow id="Flow_AwaitFraud_RecordDecision" sourceRef="AwaitFraud" targetRef="RecordDecision" name="Ответ получен" />
+    <bpmn:sequenceFlow id="Flow_ReviewTimeout_Cutoff" sourceRef="ReviewTimeout" targetRef="Cutoff" />
+    <bpmn:sequenceFlow id="Flow_CheckTimeout_Cutoff" sourceRef="CheckTimeout" targetRef="Cutoff" />
+    <bpmn:sequenceFlow id="Flow_Cutoff_RecordDecision" sourceRef="Cutoff" targetRef="RecordDecision" />
+    <bpmn:sequenceFlow id="Flow_RecordDecision_FinalDecision" sourceRef="RecordDecision" targetRef="FinalDecision" />
+    <bpmn:sequenceFlow id="Flow_FinalDecision_Transfer" sourceRef="FinalDecision" targetRef="Transfer" name="ALLOW">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">= decision = "ALLOW"</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_FinalDecision_PrepareRefund" sourceRef="FinalDecision" targetRef="PrepareRefund" name="DENY">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">= decision = "DENY"</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_Transfer_TransferResult" sourceRef="Transfer" targetRef="TransferResult" />
+    <bpmn:sequenceFlow id="Flow_TransferResult_NotifySuccess" sourceRef="TransferResult" targetRef="NotifySuccess" name="Да">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">= transfer_ok</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_TransferResult_PrepareRefund" sourceRef="TransferResult" targetRef="PrepareRefund" name="Нет">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">= not(transfer_ok)</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_NotifySuccess_Success" sourceRef="NotifySuccess" targetRef="Success" />
+    <bpmn:sequenceFlow id="Flow_PrepareRefund_RefundSplit" sourceRef="PrepareRefund" targetRef="RefundSplit" />
+    <bpmn:sequenceFlow id="Flow_RefundSplit_Compensate" sourceRef="RefundSplit" targetRef="Compensate" />
+    <bpmn:sequenceFlow id="Flow_RefundSplit_NotifySecurity" sourceRef="RefundSplit" targetRef="NotifySecurity" />
+    <bpmn:sequenceFlow id="Flow_Compensate_RefundJoin" sourceRef="Compensate" targetRef="RefundJoin" />
+    <bpmn:sequenceFlow id="Flow_NotifySecurity_RefundJoin" sourceRef="NotifySecurity" targetRef="RefundJoin" />
+    <bpmn:sequenceFlow id="Flow_RefundJoin_FinishRefund" sourceRef="RefundJoin" targetRef="FinishRefund" />
+    <bpmn:sequenceFlow id="Flow_FinishRefund_NotifyRefund" sourceRef="FinishRefund" targetRef="NotifyRefund" />
+    <bpmn:sequenceFlow id="Flow_NotifyRefund_Refunded" sourceRef="NotifyRefund" targetRef="Refunded" />
+    <bpmn:association id="CompensationAssociation" sourceRef="DebitCompensation" targetRef="Refund" associationDirection="One" />
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="Diagram_Payment">
+    <bpmndi:BPMNPlane id="Plane_Payment" bpmnElement="orchestrpay-payment">
+      <bpmndi:BPMNShape id="Start_di" bpmnElement="Start">
+        <dc:Bounds x="45" y="222" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="0" y="266" width="130" height="40" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Create_di" bpmnElement="Create">
+        <dc:Bounds x="140" y="200" width="130" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Debit_di" bpmnElement="Debit">
+        <dc:Bounds x="340" y="200" width="130" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="DebitCompensation_di" bpmnElement="DebitCompensation">
+        <dc:Bounds x="387" y="262" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Refund_di" bpmnElement="Refund">
+        <dc:Bounds x="340" y="370" width="130" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Fraud_di" bpmnElement="Fraud">
+        <dc:Bounds x="540" y="200" width="130" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="FraudResult_di" bpmnElement="FraudResult">
+        <dc:Bounds x="735" y="215" width="50" height="50" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="690" y="273" width="130" height="40" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="PrepareReview_di" bpmnElement="PrepareReview">
+        <dc:Bounds x="840" y="40" width="130" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ManualReview_di" bpmnElement="ManualReview">
+        <dc:Bounds x="1040" y="40" width="130" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="ReviewTimeout_di" bpmnElement="ReviewTimeout">
+        <dc:Bounds x="1117" y="102" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1072" y="146" width="130" height="40" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="AwaitFraud_di" bpmnElement="AwaitFraud">
+        <dc:Bounds x="840" y="400" width="130" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="CheckTimeout_di" bpmnElement="CheckTimeout">
+        <dc:Bounds x="887" y="462" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="842" y="506" width="130" height="40" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Cutoff_di" bpmnElement="Cutoff">
+        <dc:Bounds x="1200" y="550" width="130" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="RecordDecision_di" bpmnElement="RecordDecision">
+        <dc:Bounds x="1410" y="200" width="130" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="FinalDecision_di" bpmnElement="FinalDecision">
+        <dc:Bounds x="1590" y="215" width="50" height="50" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1545" y="273" width="130" height="40" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Transfer_di" bpmnElement="Transfer">
+        <dc:Bounds x="1690" y="200" width="130" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="TransferResult_di" bpmnElement="TransferResult">
+        <dc:Bounds x="1870" y="215" width="50" height="50" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1825" y="273" width="130" height="40" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="NotifySuccess_di" bpmnElement="NotifySuccess">
+        <dc:Bounds x="2100" y="200" width="130" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Success_di" bpmnElement="Success">
+        <dc:Bounds x="2300" y="222" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="2255" y="266" width="130" height="40" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="PrepareRefund_di" bpmnElement="PrepareRefund">
+        <dc:Bounds x="1680" y="720" width="130" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="RefundSplit_di" bpmnElement="RefundSplit">
+        <dc:Bounds x="1860" y="735" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Compensate_di" bpmnElement="Compensate">
+        <dc:Bounds x="1980" y="592" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1935" y="636" width="130" height="40" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="NotifySecurity_di" bpmnElement="NotifySecurity">
+        <dc:Bounds x="1950" y="850" width="130" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="RefundJoin_di" bpmnElement="RefundJoin">
+        <dc:Bounds x="2160" y="735" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="FinishRefund_di" bpmnElement="FinishRefund">
+        <dc:Bounds x="2260" y="720" width="130" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="NotifyRefund_di" bpmnElement="NotifyRefund">
+        <dc:Bounds x="2450" y="720" width="130" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Refunded_di" bpmnElement="Refunded">
+        <dc:Bounds x="2650" y="742" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="2605" y="786" width="130" height="40" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_Start_Create_di" bpmnElement="Flow_Start_Create">
+        <di:waypoint x="81" y="240" />
+        <di:waypoint x="140" y="240" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Create_Debit_di" bpmnElement="Flow_Create_Debit">
+        <di:waypoint x="270" y="240" />
+        <di:waypoint x="340" y="240" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Debit_Fraud_di" bpmnElement="Flow_Debit_Fraud">
+        <di:waypoint x="470" y="240" />
+        <di:waypoint x="540" y="240" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Fraud_FraudResult_di" bpmnElement="Flow_Fraud_FraudResult">
+        <di:waypoint x="670" y="240" />
+        <di:waypoint x="735" y="240" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_FraudResult_PrepareReview_di" bpmnElement="Flow_FraudResult_PrepareReview">
+        <di:waypoint x="760" y="215" />
+        <di:waypoint x="760" y="80" />
+        <di:waypoint x="840" y="80" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="768" y="128" width="110" height="30" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_FraudResult_AwaitFraud_di" bpmnElement="Flow_FraudResult_AwaitFraud">
+        <di:waypoint x="760" y="265" />
+        <di:waypoint x="760" y="440" />
+        <di:waypoint x="840" y="440" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="768" y="340" width="110" height="30" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_FraudResult_RecordDecision_di" bpmnElement="Flow_FraudResult_RecordDecision">
+        <di:waypoint x="785" y="240" />
+        <di:waypoint x="1410" y="240" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="793" y="210" width="110" height="30" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_PrepareReview_ManualReview_di" bpmnElement="Flow_PrepareReview_ManualReview">
+        <di:waypoint x="970" y="80" />
+        <di:waypoint x="1040" y="80" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ManualReview_RecordDecision_di" bpmnElement="Flow_ManualReview_RecordDecision">
+        <di:waypoint x="1170" y="80" />
+        <di:waypoint x="1475" y="80" />
+        <di:waypoint x="1475" y="200" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1178" y="50" width="110" height="30" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_AwaitFraud_RecordDecision_di" bpmnElement="Flow_AwaitFraud_RecordDecision">
+        <di:waypoint x="970" y="440" />
+        <di:waypoint x="1475" y="440" />
+        <di:waypoint x="1475" y="280" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="978" y="410" width="110" height="30" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ReviewTimeout_Cutoff_di" bpmnElement="Flow_ReviewTimeout_Cutoff">
+        <di:waypoint x="1135" y="138" />
+        <di:waypoint x="1135" y="590" />
+        <di:waypoint x="1200" y="590" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_CheckTimeout_Cutoff_di" bpmnElement="Flow_CheckTimeout_Cutoff">
+        <di:waypoint x="905" y="498" />
+        <di:waypoint x="905" y="590" />
+        <di:waypoint x="1200" y="590" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Cutoff_RecordDecision_di" bpmnElement="Flow_Cutoff_RecordDecision">
+        <di:waypoint x="1330" y="590" />
+        <di:waypoint x="1530" y="590" />
+        <di:waypoint x="1530" y="320" />
+        <di:waypoint x="1500" y="320" />
+        <di:waypoint x="1500" y="280" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_RecordDecision_FinalDecision_di" bpmnElement="Flow_RecordDecision_FinalDecision">
+        <di:waypoint x="1540" y="240" />
+        <di:waypoint x="1590" y="240" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_FinalDecision_Transfer_di" bpmnElement="Flow_FinalDecision_Transfer">
+        <di:waypoint x="1640" y="240" />
+        <di:waypoint x="1690" y="240" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1645" y="210" width="110" height="30" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_FinalDecision_PrepareRefund_di" bpmnElement="Flow_FinalDecision_PrepareRefund">
+        <di:waypoint x="1615" y="265" />
+        <di:waypoint x="1615" y="760" />
+        <di:waypoint x="1680" y="760" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1618" y="360" width="110" height="30" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Transfer_TransferResult_di" bpmnElement="Flow_Transfer_TransferResult">
+        <di:waypoint x="1820" y="240" />
+        <di:waypoint x="1870" y="240" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_TransferResult_NotifySuccess_di" bpmnElement="Flow_TransferResult_NotifySuccess">
+        <di:waypoint x="1920" y="240" />
+        <di:waypoint x="2100" y="240" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1928" y="210" width="110" height="30" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_TransferResult_PrepareRefund_di" bpmnElement="Flow_TransferResult_PrepareRefund">
+        <di:waypoint x="1895" y="265" />
+        <di:waypoint x="1895" y="510" />
+        <di:waypoint x="1745" y="510" />
+        <di:waypoint x="1745" y="720" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1905" y="340" width="110" height="30" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_NotifySuccess_Success_di" bpmnElement="Flow_NotifySuccess_Success">
+        <di:waypoint x="2230" y="240" />
+        <di:waypoint x="2300" y="240" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_PrepareRefund_RefundSplit_di" bpmnElement="Flow_PrepareRefund_RefundSplit">
+        <di:waypoint x="1810" y="760" />
+        <di:waypoint x="1860" y="760" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_RefundSplit_Compensate_di" bpmnElement="Flow_RefundSplit_Compensate">
+        <di:waypoint x="1885" y="735" />
+        <di:waypoint x="1885" y="610" />
+        <di:waypoint x="1980" y="610" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_RefundSplit_NotifySecurity_di" bpmnElement="Flow_RefundSplit_NotifySecurity">
+        <di:waypoint x="1885" y="785" />
+        <di:waypoint x="1885" y="890" />
+        <di:waypoint x="1950" y="890" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Compensate_RefundJoin_di" bpmnElement="Flow_Compensate_RefundJoin">
+        <di:waypoint x="2016" y="610" />
+        <di:waypoint x="2185" y="610" />
+        <di:waypoint x="2185" y="735" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_NotifySecurity_RefundJoin_di" bpmnElement="Flow_NotifySecurity_RefundJoin">
+        <di:waypoint x="2080" y="890" />
+        <di:waypoint x="2185" y="890" />
+        <di:waypoint x="2185" y="785" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_RefundJoin_FinishRefund_di" bpmnElement="Flow_RefundJoin_FinishRefund">
+        <di:waypoint x="2210" y="760" />
+        <di:waypoint x="2260" y="760" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_FinishRefund_NotifyRefund_di" bpmnElement="Flow_FinishRefund_NotifyRefund">
+        <di:waypoint x="2390" y="760" />
+        <di:waypoint x="2450" y="760" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_NotifyRefund_Refunded_di" bpmnElement="Flow_NotifyRefund_Refunded">
+        <di:waypoint x="2580" y="760" />
+        <di:waypoint x="2650" y="760" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="CompensationAssociation_di" bpmnElement="CompensationAssociation">
+        <di:waypoint x="405" y="298" />
+        <di:waypoint x="405" y="370" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

@@ -1,0 +1,13 @@
+anyio==4.15.1
+certifi==2026.7.22
+charset-normalizer==3.5.2
+grpcio==1.84.0
+grpcio-health-checking==1.81.1
+idna==3.20
+oauthlib==4.0.0
+protobuf==6.33.6
+pyzeebe==4.7.0
+requests==2.34.2
+requests-oauthlib==2.0.0
+typing_extensions==4.16.0
+urllib3==2.8.0
