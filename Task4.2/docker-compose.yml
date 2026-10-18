@@ -1,0 +1,114 @@
+name: orchestrpay
+
+services:
+  zeebe:
+    image: camunda/zeebe:${CAMUNDA_PLATFORM_VERSION:-8.5.22}
+    environment:
+      ZEEBE_BROKER_EXPORTERS_ELASTICSEARCH_CLASSNAME: io.camunda.zeebe.exporter.ElasticsearchExporter
+      ZEEBE_BROKER_EXPORTERS_ELASTICSEARCH_ARGS_URL: http://elasticsearch:9200
+      ZEEBE_BROKER_EXPORTERS_ELASTICSEARCH_ARGS_BULK_SIZE: 1
+      JAVA_TOOL_OPTIONS: -Xms512m -Xmx512m
+    ports:
+      - "127.0.0.1:26500:26500"
+      - "127.0.0.1:9600:9600"
+      - "127.0.0.1:8088:8080"
+    volumes:
+      - zeebe:/usr/local/zeebe/data
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 3s bash -c ':> /dev/tcp/127.0.0.1/9600'"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:${ELASTIC_VERSION:-8.14.3}
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: -Xms512m -Xmx512m
+    ports:
+      - "127.0.0.1:9200:9200"
+    volumes:
+      - elastic:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS 'http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=3s' | grep -Eq '\"status\":\"(green|yellow)\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  operate:
+    image: camunda/operate:${CAMUNDA_OPERATE_VERSION:-8.5.22}
+    environment:
+      CAMUNDA_OPERATE_ZEEBE_GATEWAYADDRESS: zeebe:26500
+      CAMUNDA_OPERATE_ELASTICSEARCH_URL: http://elasticsearch:9200
+      CAMUNDA_OPERATE_ZEEBEELASTICSEARCH_URL: http://elasticsearch:9200
+      JAVA_TOOL_OPTIONS: -Xms256m -Xmx512m
+      management.endpoints.web.exposure.include: health
+      management.endpoint.health.probes.enabled: "true"
+    ports:
+      - "127.0.0.1:8081:8080"
+    depends_on:
+      zeebe:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:8080/actuator/health/readiness"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  tasklist:
+    image: camunda/tasklist:${CAMUNDA_TASKLIST_VERSION:-8.5.24}
+    environment:
+      CAMUNDA_TASKLIST_ZEEBE_GATEWAYADDRESS: zeebe:26500
+      CAMUNDA_TASKLIST_ZEEBE_RESTADDRESS: http://zeebe:8080
+      CAMUNDA_TASKLIST_ELASTICSEARCH_URL: http://elasticsearch:9200
+      CAMUNDA_TASKLIST_ZEEBEELASTICSEARCH_URL: http://elasticsearch:9200
+      JAVA_TOOL_OPTIONS: -Xms256m -Xmx512m
+      management.endpoints.web.exposure.include: health
+      management.endpoint.health.probes.enabled: "true"
+    ports:
+      - "127.0.0.1:8082:8080"
+    depends_on:
+      zeebe:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:8080/actuator/health/readiness"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  deploy-process:
+    build: ./deploy-process
+    volumes:
+      - ./process.bpmn:/process.bpmn:ro
+      - ./fraud-review.form:/fraud-review.form:ro
+    depends_on:
+      zeebe:
+        condition: service_healthy
+    command:
+      - |
+        attempt=0
+        until zbctl status --address zeebe:26500 --insecure; do
+          attempt=$$((attempt + 1))
+          if [ "$$attempt" -ge 30 ]; then exit 1; fi
+          sleep 2
+        done
+        zbctl deploy /process.bpmn /fraud-review.form --address zeebe:26500 --insecure
+
+  payment-service:
+    build: .
+    environment:
+      ZEEBE_ADDRESS: zeebe:26500
+    depends_on:
+      deploy-process:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+volumes:
+  zeebe:
+  elastic:

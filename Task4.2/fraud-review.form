@@ -1,0 +1,38 @@
+{
+  "id": "fraud-review",
+  "type": "default",
+  "schemaVersion": 16,
+  "components": [
+    {
+      "type": "text",
+      "id": "instructions",
+      "text": "# Ручная антифрод-проверка\nВыберите окончательное решение по платежу."
+    },
+    {
+      "type": "textfield",
+      "id": "payment",
+      "key": "payment_id",
+      "label": "Идентификатор платежа",
+      "readonly": true
+    },
+    {
+      "type": "radio",
+      "id": "decision",
+      "key": "manual_decision",
+      "label": "Решение",
+      "values": [
+        {
+          "label": "Разрешить",
+          "value": "ALLOW"
+        },
+        {
+          "label": "Запретить",
+          "value": "DENY"
+        }
+      ],
+      "validate": {
+        "required": true
+      }
+    }
+  ]
+}

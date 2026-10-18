@@ -1,0 +1,7 @@
+payment-service-1  | 2026-10-18 22:22:26,357 INFO payment=shot-manual-allow-1 process=2251799813693301 job=2251799813693316 step=create-payment result={"status": "CREATED", "debited": 0, "transferred": 0, "refunded": 0}
+payment-service-1  | 2026-10-18 22:22:26,453 INFO payment=shot-manual-allow-1 process=2251799813693301 job=2251799813693336 step=debit-funds result={"debited": 10000, "status": "DEBITED"}
+payment-service-1  | 2026-10-18 22:22:26,493 INFO payment=shot-manual-allow-1 process=2251799813693301 job=2251799813693343 step=check-fraud result={"decision": "MANUAL", "status": "CHECK_PENDING", "decision_source": "fraud"}
+payment-service-1  | 2026-10-18 22:22:26,585 INFO payment=shot-manual-allow-1 process=2251799813693301 job=2251799813693353 step=prepare-review result={"status": "MANUAL_REVIEW", "review_deadline": "2026-10-18T22:42:26.585796+00:00"}
+payment-service-1  | 2026-10-18 22:25:32,529 INFO payment=shot-manual-allow-1 process=2251799813693301 job=2251799813693584 step=record-decision result={"status": "APPROVED"}
+payment-service-1  | 2026-10-18 22:25:32,555 INFO payment=shot-manual-allow-1 process=2251799813693301 job=2251799813693592 step=transfer-funds result={"transfer_ok": true, "transferred": 10000, "status": "SUCCEEDED"}
+payment-service-1  | 2026-10-18 22:25:32,589 INFO payment=shot-manual-allow-1 process=2251799813693301 job=2251799813693601 step=notify-customer result={"customer_notified": true}
